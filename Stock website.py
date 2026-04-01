@@ -7,13 +7,14 @@ import numpy as np
 from FinMind.data import DataLoader
 from scipy.stats import norm
 import glob
+import os
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(layout="wide", page_title="Quant Dashboard Pro")
+st.set_page_config(layout="wide", page_title="Quant Dashboard Pro", page_icon="🚀")
 
 # Sidebar Navigation
 st.sidebar.title("📱 Navigation")
-page = st.sidebar.radio("Go to", ["Dashboard", "Correlation Lab", "ETF Consensus"])
+page = st.sidebar.radio("Go to", ["Dashboard", "Correlation Lab", "ETF Consensus", "Alpha Terminal"])
 
 # Global Sidebar Parameters
 st.sidebar.header("Global Parameters")
@@ -53,6 +54,63 @@ def load_market_data(stock_id, days):
         df_chips = None
         
     return df_price, df_chips
+
+@st.cache_data(ttl=3600)
+def load_consensus_data():
+    file_path = "Market_Consensus_Latest.csv"
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path, dtype={'代號': str})
+    return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def load_confluence_signals():
+    csv_files = glob.glob("*_daily_holdings.csv")
+    if not csv_files: return pd.DataFrame()
+    
+    all_data = []
+    for file in csv_files:
+        etf_code = file.split('_')[0]
+        df = pd.read_csv(file, dtype={'代號': str})
+        df['ETF'] = etf_code
+        all_data.append(df)
+        
+    df_all = pd.concat(all_data, ignore_index=True)
+    dates = sorted(df_all['Date'].unique())
+    if len(dates) < 2: return pd.DataFrame()
+    
+    t_0, t_1 = dates[-1], dates[-2]
+    df_t0 = df_all[df_all['Date'] == t_0]
+    df_t1 = df_all[df_all['Date'] == t_1]
+    name_map = df_t0.groupby('代號')['股票名稱'].first().to_dict()
+
+    t1_holders = df_t1.groupby('代號')['ETF'].apply(list).reset_index(name='T1_ETFs')
+    t1_holders['T1_Count'] = t1_holders['T1_ETFs'].apply(len)
+    
+    t0_holders = df_t0.groupby('代號')['ETF'].apply(list).reset_index(name='T0_ETFs')
+    t0_holders['T0_Count'] = t0_holders['T0_ETFs'].apply(len)
+
+    merged = pd.merge(t1_holders, t0_holders, on='代號', how='outer').fillna({'T1_Count': 0, 'T0_Count': 0})
+    merged['T1_ETFs'] = merged['T1_ETFs'].apply(lambda d: d if isinstance(d, list) else [])
+    merged['T0_ETFs'] = merged['T0_ETFs'].apply(lambda d: d if isinstance(d, list) else [])
+
+    # V9 核心濾網
+    confluence_df = merged[(merged['T1_Count'] <= 2) & (merged['T0_Count'] > merged['T1_Count'])].copy()
+    
+    if confluence_df.empty: return pd.DataFrame()
+    
+    confluence_df['股票名稱'] = confluence_df['代號'].map(name_map)
+    confluence_df['點火主力'] = confluence_df.apply(lambda row: ", ".join(set(row['T0_ETFs']) - set(row['T1_ETFs'])), axis=1)
+    
+    return confluence_df[['代號', '股票名稱', 'T1_Count', 'T0_Count', '點火主力']].sort_values(by='T0_Count', ascending=False)
+
+# 💡 載入 V7 3D 流動性衝擊資料
+@st.cache_data(ttl=3600)
+def load_impact_data():
+    file_path = "V7_Impact_Results.csv"
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path, dtype={'代號': str})
+    return pd.DataFrame()
+
 
 # --- PAGE 1: MAIN DASHBOARD ---
 if page == "Dashboard":
@@ -167,7 +225,6 @@ elif page == "Correlation Lab":
         try:
             data = yf.download(ticker_list_formatted, period=f"{lookback}d")['Close']
             
-            # 清洗與正規化
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = [c[0] for c in data.columns]
             data.columns = [c.replace('.TW', '') for c in data.columns]
@@ -177,7 +234,6 @@ elif page == "Correlation Lab":
             df_corr = df_filled.pct_change().dropna()
             df_plot = df_filled.dropna()
 
-            # --- Analysis 1: Correlation Matrix ---
             st.subheader("1. Return Correlation Matrix")
             c1, c2, c3 = st.columns([1, 2, 1])
             with c2:
@@ -195,7 +251,6 @@ elif page == "Correlation Lab":
                 fig_corr.update_layout(height=500) 
                 st.plotly_chart(fig_corr, use_container_width=True)
                 
-            # --- Analysis 2: Cumulative Return ---
             st.subheader("2. Cumulative Return Comparison")
             normalized_data = (df_plot / df_plot.iloc[0]) * 100
             
@@ -211,7 +266,6 @@ elif page == "Correlation Lab":
             )
             st.plotly_chart(fig_norm, use_container_width=True)
             
-            # --- Analysis 3: Arbitrage Ratio ---
             if "2330" in data.columns and "TSM" in data.columns:
                 st.subheader("3. Arbitrage Analysis (TSM vs 2330)")
                 c_a, c_b = st.columns(2)
@@ -230,7 +284,6 @@ elif page == "Correlation Lab":
         except Exception as e:
             st.error(f"Error: {e}") 
 
-
 # --- PAGE 3: ETF CONSENSUS HEATMAP ---
 elif page == "ETF Consensus":
     st.title("🔥 主動型 ETF 機構共識熱力圖")
@@ -239,7 +292,7 @@ elif page == "ETF Consensus":
     csv_files = glob.glob("*_daily_holdings.csv")
     
     if not csv_files:
-        st.warning("⚠️ 找不到本地端的 CSV 資料，請先執行爬蟲擷取引擎 (V4_Batch.py)。")
+        st.warning("⚠️ 找不到本地端的 CSV 資料，請先執行爬蟲擷取引擎。")
     else:
         df_list = []
         for file in csv_files:
@@ -254,13 +307,9 @@ elif page == "ETF Consensus":
                 
         if df_list:
             all_holdings = pd.concat(df_list, ignore_index=True)
-            # 資料清洗：對齊代號型態
             all_holdings['代號'] = all_holdings['代號'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            
-            # 💡 建立代號對應名稱的字典 (取各代號對應到的第一個名字作為顯示代表)
             ticker_to_name = all_holdings.groupby('代號')['股票名稱'].first()
             
-            # 💡 絕對主鍵：嚴格以「代號」進行矩陣轉置
             pivot_df = all_holdings.pivot_table(
                 index='代號', 
                 columns='ETF_Code', 
@@ -268,26 +317,21 @@ elif page == "ETF Consensus":
                 aggfunc='sum'
             ).fillna(0)
             
-            # 💡 重建易讀的 Y 軸：將 Index 替換為 "代號_名稱" (例如 "2330 台積電")
             pivot_df.index = pivot_df.index.astype(str) + " " + pivot_df.index.map(ticker_to_name)
             
-            # 計算共識度與資金總熱度
             pivot_df['持有家數'] = (pivot_df > 0).sum(axis=1)
             pivot_df['總權重'] = pivot_df.drop(columns=['持有家數'], errors='ignore').sum(axis=1)
             
-            # UI：側邊欄濾網
             st.sidebar.markdown("---")
             st.sidebar.header("⚙️ Heatmap 濾網")
             min_holders = st.sidebar.slider("最小持有家數 (共識度)", min_value=1, max_value=7, value=2)
             top_n = st.sidebar.number_input("顯示總權重 Top N", min_value=10, max_value=100, value=40)
             
-            # 套用濾網
             filtered_df = pivot_df[pivot_df['持有家數'] >= min_holders]
             filtered_df = filtered_df.sort_values(by='總權重', ascending=False).head(top_n)
             
             heatmap_data = filtered_df.drop(columns=['持有家數', '總權重'])
             
-            # 繪製 Plotly 熱力圖
             fig_heat = px.imshow(
                 heatmap_data,
                 labels=dict(x="主動型 ETF", y="標的", color="權重(%)"),
@@ -297,11 +341,78 @@ elif page == "ETF Consensus":
                 aspect="auto",
                 text_auto=".2f"
             )
-            # 鎖定左側 Y 軸為類別，避免被當成數字排序
             fig_heat.update_yaxes(type="category")
             fig_heat.update_layout(height=800) 
             
             st.plotly_chart(fig_heat, use_container_width=True)
             
-            with st.expander("📊 查看底層共識數據矩陣 (已根據代號正規化)"):
+            with st.expander("📊 查看底層共識數據矩陣"):
                 st.dataframe(filtered_df.style.background_gradient(cmap='Reds', axis=None))
+
+# --- PAGE 4: ALPHA TERMINAL (V12 Integration) ---
+elif page == "Alpha Terminal":
+    st.title("🚀 Alpha 戰情室：機構微結構透視終端")
+    st.markdown("---")
+    
+    df_consensus = load_consensus_data()
+    df_confluence = load_confluence_signals()
+    df_impact = load_impact_data()  # 💡 載入 V7 數據
+
+    # 💡 新增第三個 Tab
+    tab1, tab2, tab3 = st.tabs(["🔥 橫截面共識熱力圖", "🎯 完美擊球點掃描", "🌊 3D 流動性衝擊矩陣"])
+
+    with tab1:
+        st.subheader("📊 機構持股板塊分佈")
+        if not df_consensus.empty:
+            plot_df = df_consensus[df_consensus['持有家數'] >= 3].copy()
+            plot_df['標籤'] = plot_df['股票名稱'] + "<br>(" + plot_df['持有家數'].astype(str) + "家)"
+            
+            fig = px.treemap(
+                plot_df, 
+                path=[px.Constant("全市場高共識標的"), '持有家數', '標籤'], 
+                values='總權重',
+                color='持有家數',
+                color_continuous_scale='Turbo',
+                title="區塊大小 = 總權重 | 顏色深淺 = 持有家數"
+            )
+            fig.update_traces(textinfo="label+value")
+            fig.update_layout(margin=dict(t=50, l=25, r=25, b=25), height=600)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("尚無共識資料，請先執行 Alpha 引擎！")
+
+    with tab2:
+        st.subheader("🎯 今日籌碼共振突破名單 (V9)")
+        if not df_confluence.empty:
+            st.dataframe(
+                df_confluence.rename(columns={'T1_Count': '昨日持有家數', 'T0_Count': '今日持有家數'}),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.info("💡 Quant 提示：請配合晨報中的【V7 市場衝擊成本】與【外資環境標籤】，剃除參與率 > 10% 或是外資大量倒貨的標的。")
+        else:
+            st.success("今日無符合條件的初升段共振標的。")
+
+    with tab3:
+        st.subheader("🌊 投信資金微結構解析 (V7 3D 衝擊矩陣)")
+        if not df_impact.empty:
+            # 讓 DataFrame 在網頁上看起來更專業
+            st.dataframe(
+                df_impact,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "參與率(%)": st.column_config.ProgressColumn(
+                        "參與率(%)", help="佔單日總成交量比例", format="%.2f%%", min_value=0, max_value=25
+                    ),
+                    "漲跌幅(%)": st.column_config.NumberColumn(
+                        "漲跌幅(%)", format="%.2f%%"
+                    ),
+                    "最新總權重(%)": st.column_config.NumberColumn(
+                        "最新總權重(%)", format="%.2f%%"
+                    )
+                }
+            )
+            st.info("💡 尋寶指南：優先鎖定【🌱 完美初升段】與【🛡️ 穩健底倉】，避開【🚨 異常擁擠】與【💀 提款機陷阱】。")
+        else:
+            st.warning("尚無 V7 衝擊分析資料，請先執行本地端 Alpha 引擎產生數據。")
