@@ -1,6 +1,8 @@
 streamlit
-pandas
 yfinance
+pandas
 plotly
+numpy
 FinMind
 scipy
+tqdm
