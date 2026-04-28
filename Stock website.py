@@ -323,18 +323,19 @@ elif page == "Alpha Terminal":
             st.success("今日無符合條件的初升段共振標的。")
 
     with tab3:
-        st.subheader("🌊 投信資金微結構解析 (V7 3D 衝擊矩陣)")
+        st.subheader("🌊 投信資金微結構解析 (V7 5D 衝擊矩陣)")
         if not df_impact.empty:
             st.dataframe(
                 df_impact, use_container_width=True, hide_index=True,
                 column_config={
+                    "投信連買天數": st.column_config.NumberColumn("🔥 連買天數", format="%d 天"), # 💡 新增這行
                     "投信參與率(%)": st.column_config.ProgressColumn("投信參與率(%)", format="%.2f%%", min_value=0, max_value=25),
                     "外資參與率(%)": st.column_config.ProgressColumn("外資參與率(%)", format="%.2f%%", min_value=-20, max_value=20),
                     "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅(%)", format="%.2f%%"),
                     "最新總權重(%)": st.column_config.NumberColumn("最新總權重(%)", format="%.2f%%")
                 }
             )
-            st.info("💡 尋寶指南：優先鎖定【🌱 完美初升段】與【🛡️ 穩健底倉】，避開【🚨 異常擁擠】與【💀 提款機陷阱】。")
+            st.info("💡 尋寶指南：優先鎖定【🌱 完美初升段】且【🔥 連買天數 > 2】的標的，代表經理人建倉意圖極為堅定。")
         else:
             st.warning("尚無 V7 衝擊分析資料，請先執行本地端 Alpha 引擎產生數據。")
 
