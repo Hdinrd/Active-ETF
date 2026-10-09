@@ -157,8 +157,36 @@ def main(argv=None) -> int:
         from .notify import send_telegram
         send_telegram(report.telegram_summary(cross, flows, D, etf_list), config.REPORT_DIR / f"{D}.md", log=log)
 
+    _github_actions_summary(md, D, stats, holdings, cross)
     print("\n" + md[:6000])
     return 0
+
+
+def _github_actions_summary(md, D, stats, holdings, cross):
+    """在 GitHub Actions 上：報告寫進 run 頁面的 Summary，重點寫成 notice (REST API 讀得到)。"""
+    import os
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    summ = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summ:
+        with open(summ, "a", encoding="utf-8") as f:
+            f.write(md[:900_000])
+    by_etf = holdings.groupby("etf")["date"].agg(["min", "max", "nunique"])
+    lines = [
+        f"report_date={D} etfs={len(by_etf)} rows={len(holdings)} "
+        f"days_min={int(by_etf['nunique'].min())} days_max={int(by_etf['nunique'].max())} "
+        f"first={by_etf['min'].min()} last={by_etf['max'].max()}",
+        f"fetched_ok={len(stats.get('ok', [])) if stats else 0} failed={','.join(stats.get('failed', [])) if stats else ''}",
+        "lagging=" + ",".join(f"{e}:{d}" for e, d in by_etf["max"].items() if d < (D or "")),
+    ]
+    if not cross.empty and D:
+        cx = cross[cross["date"] == D]
+        for label, df in (("co_buy", cx[cx["n_buy"] >= 2].nlargest(5, "active_ntd")),
+                          ("co_sell", cx[cx["n_sell"] >= 2].nsmallest(5, "active_ntd"))):
+            lines.append(label + "=" + "; ".join(f"{r.code}{r.name}({r.n_buy if label == 'co_buy' else r.n_sell}家,{r.active_ntd / 1e8:+.1f}億)"
+                                                 for r in df.itertuples()))
+    msg = "%0A".join(x.replace("%", "%25").replace("\n", " ") for x in lines)
+    print(f"::notice title=ETF pipeline::{msg}", flush=True)
 
 
 def _write_status(run_at, stats, warnings, D, holdings=None):
