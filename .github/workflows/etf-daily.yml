@@ -13,6 +13,10 @@ on:
         description: "回補全部歷史"
         type: boolean
         default: false
+      test_telegram:
+        description: "只測試 Telegram 推播 (用現有資料重送最新報告，不抓資料)"
+        type: boolean
+        default: false
 
 concurrency:
   group: etf-daily
@@ -50,6 +54,8 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             python -m etf_tracker.run --backfill --dry-run --data-dir /tmp/etf_dryrun
             mkdir -p data/reports && cp /tmp/etf_dryrun/reports/latest.md data/reports/ && cp /tmp/etf_dryrun/status.json data/
+          elif [ "${{ inputs.test_telegram }}" = "true" ]; then
+            python -m etf_tracker.run --no-fetch --notify --force-notify
           elif [ "${{ inputs.backfill }}" = "true" ]; then
             python -m etf_tracker.run --backfill --notify
           else
@@ -67,7 +73,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit data
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && inputs.test_telegram != true
         run: |
           git config user.name "etf-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -6,7 +6,8 @@
   python -m etf_tracker.run --backfill      # 回補全部歷史
   python -m etf_tracker.run --no-fetch      # 不連網，只用現有資料重算報告
   python -m etf_tracker.run --dry-run       # 寫到暫存資料夾，不動 data/ (CI 測試用)
-  python -m etf_tracker.run --notify        # 跑完推播 Telegram (需要 TG_TOKEN / TG_CHAT_ID)
+  python -m etf_tracker.run --notify        # 跑完推播 Telegram (需要 TG_TOKEN / TG_CHAT_ID)；報告日沒變不重複推
+  python -m etf_tracker.run --no-fetch --notify --force-notify   # 測試推播
   python -m etf_tracker.run --etfs 00981A,00403A
 """
 from __future__ import annotations
@@ -104,6 +105,7 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="寫到暫存資料夾 (CI 用)")
     ap.add_argument("--data-dir", help="指定資料夾")
     ap.add_argument("--notify", action="store_true", help="推播 Telegram")
+    ap.add_argument("--force-notify", action="store_true", help="報告日沒變也推播 (測試用)")
     ap.add_argument("--etfs", type=lambda s: [x.strip().upper() for x in s.split(",") if x.strip()])
     args = ap.parse_args(argv)
 
@@ -151,7 +153,7 @@ def main(argv=None) -> int:
     for p in written:
         log(f"   - {p}")
 
-    if args.notify and not args.dry_run and D and D == prev_report_date:
+    if args.notify and not args.dry_run and D and D == prev_report_date and not args.force_notify:
         log(f"   報告基準日 {D} 跟上次一樣，不重複推播")
     elif args.notify and not args.dry_run and D:
         from .notify import send_telegram

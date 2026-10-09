@@ -25,10 +25,17 @@ def telegram_credentials() -> tuple[str | None, str | None]:
     return os.environ.get("TG_TOKEN") or None, os.environ.get("TG_CHAT_ID") or None
 
 
+def _gha(level: str, msg: str) -> None:
+    """在 GitHub Actions 上把推播結果寫成 annotation，Actions 頁面與 API 都看得到。"""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::{level} title=Telegram::{msg}", flush=True)
+
+
 def send_telegram(text: str, document: Path | None = None, log=print) -> bool:
     token, chat = telegram_credentials()
     if not token or not chat:
         log("   (未設定 TG_TOKEN / TG_CHAT_ID，略過推播)")
+        _gha("warning", "沒有設定 TG_TOKEN / TG_CHAT_ID secrets，略過推播")
         return False
     import requests
     base = f"https://api.telegram.org/bot{token}"
@@ -45,8 +52,12 @@ def send_telegram(text: str, document: Path | None = None, log=print) -> bool:
             if not r.ok:
                 log(f"   ⚠️ Telegram 附件失敗: {r.status_code} {r.text[:200]}")
     except Exception as e:  # noqa: BLE001
-        log(f"   ⚠️ Telegram 連線失敗: {e}")
+        log(f"   ⚠️ Telegram 連線失敗: {type(e).__name__}")
+        _gha("warning", f"連線失敗 {type(e).__name__}")
         return False
     if ok:
         log("   📲 已推播到 Telegram")
+        _gha("notice", "已推播")
+    else:
+        _gha("warning", f"推播失敗 HTTP {r.status_code}: {r.text[:150]}")
     return ok

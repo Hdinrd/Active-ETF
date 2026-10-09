@@ -2,6 +2,8 @@
 """每日 markdown 報告 + 給網頁用的衍生 CSV。"""
 from __future__ import annotations
 
+import html
+
 import numpy as np
 import pandas as pd
 
@@ -247,9 +249,10 @@ def telegram_summary(cross: pd.DataFrame, flows: pd.DataFrame, D: str, etf_list:
         cb = cx[cx["n_buy"] >= 2].sort_values(["n_buy", "active_ntd"], ascending=False).head(8)
         if len(cb):
             lines.append("\n<b>主動共振買進</b>")
-            lines += [f"{r.name_}({r.code}) {r.n_buy}家 {_yi(r.active_ntd)}億" for r in cb.rename(columns={"name": "name_"}).itertuples()]
+            lines += [f"{html.escape(str(r.name_))}({r.code}) {r.n_buy}家 {_yi(r.active_ntd)}億" for r in cb.rename(columns={"name": "name_"}).itertuples()]
         cs = cx[cx["n_sell"] >= 2].sort_values(["n_sell", "active_ntd"], ascending=[False, True]).head(8)
         if len(cs):
             lines.append("\n<b>主動共振賣出</b>")
-            lines += [f"{r.name_}({r.code}) {r.n_sell}家 {_yi(r.active_ntd)}億" for r in cs.rename(columns={"name": "name_"}).itertuples()]
+            lines += [f"{html.escape(str(r.name_))}({r.code}) {r.n_sell}家 {_yi(r.active_ntd)}億" for r in cs.rename(columns={"name": "name_"}).itertuples()]
+    lines.append("\n<i>回測：共振訊號扣掉 beta 與動能後沒有超額，當部位與擁擠度參考，不是買點。</i>")
     return "\n".join(lines)[:3900]
