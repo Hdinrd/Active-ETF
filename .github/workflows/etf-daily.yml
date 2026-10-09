@@ -2,8 +2,9 @@ name: Active ETF daily
 
 on:
   schedule:
-    - cron: "0 14 * * 1-5"    # 台北 22:00 (週一到週五)
-    - cron: "30 0 * * 2-6"    # 台北隔天 08:30 補抓晚更新的 ETF (冪等，不會重複)
+    - cron: "0 12 * * 1-5"    # 台北 20:00 (週一到週五)：趕在本機 21:00 打開記事本之前
+    - cron: "0 14 * * 1-5"    # 台北 22:00：補抓 20:00 還沒更新的 ETF
+    - cron: "30 0 * * 2-6"    # 台北隔天 08:30：再補一次 (冪等，不會重複寫、不會重複推播)
   pull_request:              # PR：完整回補但不寫回 repo，用來驗證 GitHub 機器抓得到 pocket.tw
     paths: ["etf_tracker/**", ".github/workflows/etf-daily.yml"]
   workflow_dispatch:
