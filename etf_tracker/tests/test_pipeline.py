@@ -28,6 +28,8 @@ def test_parse_holdings_and_assets():
     assert set(df["date"]) == {"2026-10-07"}
     cash = df[df["code"] == "PFUR_NTD"].iloc[0]
     assert np.isnan(cash["weight"]) and cash["shares"] == -1029546726
+    assert fetch_pocket._clean_name("信  驊") == "信驊"
+    assert fetch_pocket._clean_name("NVIDIA  CORP ") == "NVIDIA CORP"
     df = store.add_asset_type(df)
     a = dict(zip(df["code"], df["asset"]))
     assert a["2308"] == "tw_stock" and a["LITE US"] == "foreign_stock"

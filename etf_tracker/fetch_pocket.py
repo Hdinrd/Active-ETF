@@ -10,6 +10,7 @@ pocket.tw 前端用 Nuxt + axios 打 /api/cm/MobileService/ashx/GetDtnoData.ashx
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Iterable
 
@@ -80,6 +81,12 @@ def _date(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s.astype(str).str.strip(), format="%Y%m%d", errors="coerce").dt.strftime("%Y-%m-%d")
 
 
+def _clean_name(x: str) -> str:
+    """中文名稱去掉中間的空白 (API 會給「信  驊」)；英文名稱只收斂多重空白。"""
+    x = re.sub(r"\s+", " ", str(x)).strip()
+    return re.sub(r"\s", "", x) if re.search(r"[\u4e00-\u9fff]", x) else x
+
+
 def parse_holdings(payload: dict) -> pd.DataFrame:
     """回傳欄位：date, code, name, weight, shares, unit (weight 為 %，現金列為 NaN)。"""
     df = _to_frame(payload)
@@ -94,7 +101,7 @@ def parse_holdings(payload: dict) -> pd.DataFrame:
     out = pd.DataFrame({
         "date": _date(df["date"]),
         "code": df["code"].astype(str).str.strip(),
-        "name": df["name"].astype(str).str.strip(),
+        "name": df["name"].astype(str).map(_clean_name),
         "weight": _num(df["weight"]),
         "shares": _num(df["shares"]),
         "unit": df["unit"].astype(str).str.strip(),
