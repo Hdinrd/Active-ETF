@@ -44,7 +44,12 @@ data/
 1. workflow 已在 repo 的 `.github/workflows/etf-daily.yml`（本機改了程式要推上去時用 `Publish_V2.bat`）
 2. GitHub repo → Actions → **Active ETF daily** → Run workflow 先手動跑一次
 3. 要推播：Settings → Secrets and variables → Actions → 新增 `TG_TOKEN`、`TG_CHAT_ID`
-4. 之後每個交易日 22:00、隔天 08:30 自動跑，資料直接 commit 回 repo
+4. 之後每個交易日 20:00、22:00、隔天 08:30 自動跑，資料直接 commit 回 repo
+
+**每天晚上自動跳記事本**（本機）
+- 雙擊一次 `Setup_Daily_Report.bat`：登記 Windows 排程，週一到週五 21:00 執行 `Daily_Report.bat`
+  (從 GitHub 拉最新資料 → 用記事本打開 `data/reports/latest.md`)，並刪掉舊的 `Alpha_Daily_Engine` 排程
+- 電腦要開機並登入才會跳出來；錯過的那天不會補跳，雙擊 `Sync_From_GitHub.bat` 隨時看最新的
 
 ## 報告怎麼讀
 
