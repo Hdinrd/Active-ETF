@@ -156,3 +156,14 @@ def test_real_data_signals():
     st = core.buy_streaks(ch).set_index(["etf", "code"])
     assert st.loc[("00981A", "2368"), "streak"] == 3
     assert st.loc[("00981A", "3443"), "streak"] == 3
+
+
+def test_backtest_helpers():
+    from etf_tracker import backtest as bt
+    cal = pd.Index(["2026-01-02", "2026-01-05", "2026-01-06"])
+    # 週末的持股日 (01-03) 對應到前一個交易日 01-02
+    assert list(bt.t_index(cal, ["2026-01-02", "2026-01-03", "2026-01-06"])) == [0, 0, 2]
+    rng = np.random.default_rng(0)
+    x = rng.normal(0.01, 0.01, 400)
+    assert bt.newey_west_t(x, 5) > 5
+    assert abs(bt.newey_west_t(rng.normal(0, 0.01, 400), 5)) < 3
