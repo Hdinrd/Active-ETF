@@ -2,6 +2,8 @@
 """每日 markdown 報告 + 給網頁用的衍生 CSV。"""
 from __future__ import annotations
 
+import html
+
 import numpy as np
 import pandas as pd
 
@@ -33,33 +35,50 @@ def _md_table(df: pd.DataFrame) -> str:
 
 
 def flow_table(flows: pd.DataFrame, date: str, names: dict) -> pd.DataFrame:
-    """申贖溫度計：每檔 ETF 當日與近 N 日的單位數變化。"""
+    """
+    申贖溫度計：每檔 ETF 最近一個「有單位數資料」的交易日，與近 N 日累積。
+    (規模是落後一天公布的，所以單位數最新只到報告日的前一個交易日。)
+    """
     if flows.empty:
         return pd.DataFrame()
     f = flows.sort_values(["etf", "date"]).copy()
-    # 單位數變化優先用 規模/收盤價；沒有就用持股估的 k-1
-    f["flow"] = f["flow_pct_units"].where(f["flow_pct_units"].notna(), f["flow_pct_holdings"])
     rows = []
     for etf, g in f.groupby("etf"):
         g = g[g["date"] <= date]
         if g.empty:
             continue
+        gu = g.dropna(subset=["flow_pct_units"])
         last = g.iloc[-1]
-        r = {"ETF": etf, "名稱": names.get(etf, ""), "資料日": last["date"],
+        r = {"ETF": etf, "名稱": names.get(etf, ""),
              "規模(億)": f"{last['aum_ntd'] / YI:,.0f}" if pd.notna(last.get("aum_ntd")) else "–",
-             "當日申贖(單位數)": _pct(last["flow_pct_units"]),
-             "當日申贖(持股估)": _pct(last["flow_pct_holdings"])}
-        for w in config.FLOW_WINDOWS:
-            tail = g["flow"].tail(w).dropna()
-            r[f"近{w}日累積"] = _pct(float(np.prod(1 + tail) - 1)) if len(tail) else "–"
-        # 當日申贖金額 ≈ 單位數變化 × 前一日規模
-        prev_aum = g["aum_ntd"].shift(1).iloc[-1] if len(g) > 1 else np.nan
-        r["_net_ntd"] = last["flow"] * prev_aum if pd.notna(prev_aum) and pd.notna(last["flow"]) else np.nan
+             "持股估(報告日)": _pct(last["flow_pct_holdings"])}
+        if len(gu):
+            lu = gu.iloc[-1]
+            prev_aum = gu["aum_ntd"].shift(1).iloc[-1] if len(gu) > 1 else np.nan
+            r["申贖日"] = lu["date"]
+            r["申贖(單位數)"] = _pct(lu["flow_pct_units"])
+            r["_net_ntd"] = lu["flow_pct_units"] * prev_aum if pd.notna(prev_aum) else np.nan
+            for w in config.FLOW_WINDOWS:
+                tail = gu["flow_pct_units"].tail(w)
+                r[f"近{w}日累積"] = _pct(float(np.prod(1 + tail) - 1))
+        else:
+            r["申贖日"], r["申贖(單位數)"], r["_net_ntd"] = "–", "–", np.nan
+            for w in config.FLOW_WINDOWS:
+                r[f"近{w}日累積"] = "–"
         r["_aum"] = last.get("aum_ntd", np.nan)
         rows.append(r)
     t = pd.DataFrame(rows).sort_values("_aum", ascending=False, na_position="last")
-    t["當日淨申贖(億)"] = t["_net_ntd"].map(_yi)
+    t["淨申贖(億)"] = t["_net_ntd"].map(_yi)
     return t
+
+
+def _flow_total(ft: pd.DataFrame) -> tuple[str, float]:
+    """最近一個多數 ETF 都有單位數資料的日期，及當天合計淨申贖。"""
+    d = ft.loc[ft["申贖日"] != "–", "申贖日"]
+    if d.empty:
+        return "–", np.nan
+    day = d.mode().sort_values().iloc[-1]
+    return day, ft.loc[ft["申贖日"] == day, "_net_ntd"].sum(min_count=1)
 
 
 def build_report(holdings: pd.DataFrame, changes: pd.DataFrame, flows: pd.DataFrame,
@@ -88,9 +107,10 @@ def build_report(holdings: pd.DataFrame, changes: pd.DataFrame, flows: pd.DataFr
     ft = flow_table(flows, D, names)
     out.append("## 1. 申贖溫度計（散戶資金流向）\n")
     if not ft.empty:
-        total = ft.loc[ft["資料日"] == D, "_net_ntd"].sum(min_count=1)
-        out.append(f"當日合計淨申贖 ≈ **{_yi(total)} 億**（用 規模/收盤價 估單位數，含折溢價誤差）\n")
-        cols = ["ETF", "名稱", "資料日", "規模(億)", "當日淨申贖(億)", "當日申贖(單位數)", "當日申贖(持股估)"] + \
+        day, total = _flow_total(ft)
+        out.append(f"{day} 合計淨申贖 ≈ **{_yi(total)} 億**（單位數 = 隔天公布的規模 / 當天收盤價，含折溢價誤差；"
+                   f"規模晚一天公布，所以申贖日會比報告日早一天）\n")
+        cols = ["ETF", "名稱", "申贖日", "規模(億)", "淨申贖(億)", "申贖(單位數)", "持股估(報告日)"] + \
                [f"近{w}日累積" for w in config.FLOW_WINDOWS]
         out.append(_md_table(ft[cols].head(40)))
     else:
@@ -222,16 +242,17 @@ def telegram_summary(cross: pd.DataFrame, flows: pd.DataFrame, D: str, etf_list:
     lines = [f"<b>主動式 ETF 追蹤 {D}</b>"]
     ft = flow_table(flows, D, names)
     if not ft.empty:
-        total = ft.loc[ft["資料日"] == D, "_net_ntd"].sum(min_count=1)
-        lines.append(f"合計淨申贖 ≈ {_yi(total)} 億")
+        day, total = _flow_total(ft)
+        lines.append(f"{day} 合計淨申贖 ≈ {_yi(total)} 億")
     cx = cross[cross["date"] == D] if not cross.empty else pd.DataFrame()
     if not cx.empty:
         cb = cx[cx["n_buy"] >= 2].sort_values(["n_buy", "active_ntd"], ascending=False).head(8)
         if len(cb):
             lines.append("\n<b>主動共振買進</b>")
-            lines += [f"{r.name_}({r.code}) {r.n_buy}家 {_yi(r.active_ntd)}億" for r in cb.rename(columns={"name": "name_"}).itertuples()]
+            lines += [f"{html.escape(str(r.name_))}({r.code}) {r.n_buy}家 {_yi(r.active_ntd)}億" for r in cb.rename(columns={"name": "name_"}).itertuples()]
         cs = cx[cx["n_sell"] >= 2].sort_values(["n_sell", "active_ntd"], ascending=[False, True]).head(8)
         if len(cs):
             lines.append("\n<b>主動共振賣出</b>")
-            lines += [f"{r.name_}({r.code}) {r.n_sell}家 {_yi(r.active_ntd)}億" for r in cs.rename(columns={"name": "name_"}).itertuples()]
+            lines += [f"{html.escape(str(r.name_))}({r.code}) {r.n_sell}家 {_yi(r.active_ntd)}億" for r in cs.rename(columns={"name": "name_"}).itertuples()]
+    lines.append("\n<i>回測：共振訊號扣掉 beta 與動能後沒有超額，當部位與擁擠度參考，不是買點。</i>")
     return "\n".join(lines)[:3900]

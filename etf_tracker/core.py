@@ -61,13 +61,22 @@ def build_pairs(holdings: pd.DataFrame, calendar: list[str]) -> pd.DataFrame:
 # AUM
 # ---------------------------------------------------------------------------
 def aum_lookup(etf_daily: pd.DataFrame) -> pd.DataFrame:
-    """回傳 (etf, date, aum_ntd, units, units_chg)。units 以 規模/收盤價 估 (含折溢價誤差)。"""
+    """
+    回傳 (etf, date, aum_ntd, units, units_chg)。
+
+    pocket.tw 第 t 天的「資產規模」其實是第 t-1 天的淨值規模 (實測：用當天收盤價換算的單位數變化
+    與 ETF 當日報酬相關 -0.5，用前一天收盤價則 ≈ 0)。所以
+        第 d 天的規模 ≈ 第 d+1 天公布的規模
+        第 d 天的單位數 ≈ 規模(d+1) / 收盤價(d)
+    最新一天還沒有下一筆規模 → 單位數為空 (申贖溫度計會晚一天)，金額換算退回用當天公布值。
+    """
     if etf_daily is None or etf_daily.empty:
         return pd.DataFrame(columns=["etf", "date", "aum_ntd", "units", "units_chg"])
     d = etf_daily[["etf", "date", "close", "aum_100m"]].dropna(subset=["aum_100m"]).copy()
     d = d.sort_values(["etf", "date"])
-    d["aum_ntd"] = d["aum_100m"] * 1e8
-    d["units"] = np.where(d["close"] > 0, d["aum_ntd"] / d["close"], np.nan)
+    nxt = d.groupby("etf")["aum_100m"].shift(-1) * 1e8
+    d["aum_ntd"] = nxt.fillna(d["aum_100m"] * 1e8)
+    d["units"] = np.where(d["close"] > 0, nxt / d["close"], np.nan)
     d["units_chg"] = d.groupby("etf")["units"].pct_change()
     return d[["etf", "date", "aum_ntd", "units", "units_chg"]]
 
